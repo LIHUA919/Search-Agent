@@ -1,0 +1,111 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Artificial Intelligence History</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+</head>
+<body class="bg-gray-100 font-sans leading-normal tracking-normal">
+
+    <div class="container mx-auto my-12 px-4">
+        <h1 class="text-4xl text-center font-bold text-gray-800 mb-8">The History of Artificial Intelligence</h1>
+
+        <!-- Timeline -->
+        <div class="relative wrap overflow-hidden p-10 h-full">
+            <div class="border-2-2 absolute border-opacity-20 border-gray-700 h-full border left-1/2 transform -translate-x-1/2"></div>
+
+            <!-- Timeline Item 1 -->
+            <div class="mb-8 flex justify-between items-center w-full right-timeline">
+                <div class="order-1 w-5/12"></div>
+                <div class="order-1 w-5/12 px-1 py-4 text-right">
+                    <h4 class="mb-3 font-bold text-lg md:text-2xl text-indigo-600">1956</h4>
+                    <p class="text-sm md:text-base leading-snug text-gray-900">
+                        The term "Artificial Intelligence" is coined at the Dartmouth Conference, which is considered the birth of AI as a field of study.
+                    </p>
+                </div>
+            </div>
+
+            <!-- Timeline Item 2 -->
+            <div class="mb-8 flex justify-between items-center w-full left-timeline">
+                <div class="order-1 w-5/12 px-1 py-4 text-left">
+                    <h4 class="mb-3 font-bold text-lg md:text-2xl text-indigo-600">1966</h4>
+                    <p class="text-sm md:text-base leading-snug text-gray-900">
+                        ELIZA, one of the first natural language processing programs, is developed by Joseph Weizenbaum, demonstrating simple conversation simulation.
+                    </p>
+                </div>
+                <div class="order-1 w-5/12"></div>
+            </div>
+
+            <!-- Timeline Item 3 -->
+            <div class="mb-8 flex justify-between items-center w-full right-timeline">
+                <div class="order-1 w-5/12"></div>
+                <div class="order-1 w-5/12 px-1 py-4 text-right">
+                    <h4 class="mb-3 font-bold text-lg md:text-2xl text-indigo-600">1997</h4>
+                    <p class="text-sm md:text-base leading-snug text-gray-900">
+                        IBM's Deep Blue defeats world chess champion Garry Kasparov, marking a major milestone in AI's capability to challenge human intelligence.
+                    </p>
+                </div>
+            </div>
+
+            <!-- Timeline Item 4 -->
+            <div class="mb-8 flex justify-between items-center w-full left-timeline">
+                <div class="order-1 w-5/12 px-1 py-4 text-left">
+                    <h4 class="mb-3 font-bold text-lg md:text-2xl text-indigo-600">2011</h4>
+                    <p class="text-sm md:text-base leading-snug text-gray-900">
+                        IBM Watson wins Jeopardy!, demonstrating advances in AI's ability to understand and process natural language questions and answers.
+                    </p>
+                </div>
+                <div class="order-1 w-5/12"></div>
+            </div>
+
+            <!-- Timeline Item 5 -->
+            <div class="mb-8 flex justify-between items-center w-full right-timeline">
+                <div class="order-1 w-5/12"></div>
+                <div class="order-1 w-5/12 px-1 py-4 text-right">
+                    <h4 class="mb-3 font-bold text-lg md:text-2xl text-indigo-600">2016</h4>
+                    <p class="text-sm md:text-base leading-snug text-gray-900">
+                        Google DeepMind's AlphaGo defeats world Go champion Lee Sedol, a major breakthrough in AI's ability to handle complex tasks.
+                    </p>
+                </div>
+            </div>
+
+            <!-- Timeline Item 6 -->
+            <div class="mb-8 flex justify-between items-center w-full left-timeline">
+                <div class="order-1 w-5/12 px-1 py-4 text-left">
+                    <h4 class="mb-3 font-bold text-lg md:text-2xl text-indigo-600">2023</h4>
+                    <p class="text-sm md:text-base leading-snug text-gray-900">
+                        AI models like GPT-4 demonstrate unprecedented capabilities in generating human-like text and creativity, marking the next wave of AI advancements.
+                    </p>
+                </div>
+                <div class="order-1 w-5/12"></div>
+            </div>
+        </div>
+    </div>
+
+    <style>
+        .border-2-2:before {
+            border-radius: 1rem;
+            content: " ";
+        }
+        .right-timeline:before {
+            content: "";
+            position: absolute;
+            top: 1/2;
+            right: -15px;
+            border-style: solid;
+            border-width: 10px 0 10px 10px;
+            border-color: transparent transparent transparent #3b82f6;
+        }
+        .left-timeline:before {
+            content: "";
+            position: absolute;
+            top: 1/2;
+            left: -15px;
+            border-style: solid;
+            border-width: 10px 10px 10px 0;
+            border-color: transparent #3b82f6 transparent transparent;
+        }
+    </style>
+</body>
+</html>
