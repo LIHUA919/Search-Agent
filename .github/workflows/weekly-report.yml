@@ -1,0 +1,28 @@
+name: Weekly Tech Report
+
+on:
+  schedule:
+    # Every Sunday at 00:00 UTC = 8:00 AM Beijing Time
+    - cron: '0 0 * * 0'
+  workflow_dispatch: # Allow manual trigger
+
+jobs:
+  weekly-report:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install certifi
+        run: pip install certifi
+
+      - name: Run weekly report
+        env:
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+        run: python3 collector.py
