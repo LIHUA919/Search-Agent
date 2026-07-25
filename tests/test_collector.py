@@ -112,6 +112,35 @@ class ReleaseTests(unittest.TestCase):
                 [],
             )
 
+    def test_release_fetch_failure_does_not_hide_other_repositories(self) -> None:
+        since = dt.datetime(2026, 7, 18, tzinfo=dt.timezone.utc)
+        stable_release = {
+            "tag_name": "v1.0.0",
+            "html_url": "https://example.test/v1",
+            "published_at": "2026-07-24T12:00:00Z",
+            "draft": False,
+            "prerelease": False,
+        }
+        with patch(
+            "collector.fetch_json",
+            side_effect=[OSError("network unavailable"), [stable_release]],
+        ):
+            releases = collector.fetch_watched_releases(
+                ["broken/project", "healthy/project"], since=since, limit=2
+            )
+
+        self.assertEqual([release.repository for release in releases], ["healthy/project"])
+
+    def test_zero_release_limit_skips_fetching(self) -> None:
+        since = dt.datetime(2026, 7, 18, tzinfo=dt.timezone.utc)
+        with patch("collector.fetch_json") as fetch_json:
+            releases = collector.fetch_watched_releases(
+                ["owner/project"], since=since, limit=0
+            )
+
+        self.assertEqual(releases, [])
+        fetch_json.assert_not_called()
+
 
 class ReportTests(unittest.TestCase):
     def test_release_section_is_omitted_when_watchlist_has_no_matches(self) -> None:
@@ -141,6 +170,32 @@ class ArgumentTests(unittest.TestCase):
             args = collector.parse_args()
 
         self.assertEqual((args.github_limit, args.hn_limit, args.release_limit), (3, 3, 2))
+
+    def test_combined_information_budget_cannot_exceed_eight_items(self) -> None:
+        with (
+            patch.object(
+                sys,
+                "argv",
+                [
+                    "collector.py",
+                    "--github-limit",
+                    "4",
+                    "--hn-limit",
+                    "3",
+                    "--release-limit",
+                    "2",
+                ],
+            ),
+            self.assertRaises(SystemExit),
+        ):
+            collector.parse_args()
+
+    def test_item_limits_cannot_be_negative(self) -> None:
+        with (
+            patch.object(sys, "argv", ["collector.py", "--release-limit", "-1"]),
+            self.assertRaises(SystemExit),
+        ):
+            collector.parse_args()
 
 
 class FetchTests(unittest.TestCase):

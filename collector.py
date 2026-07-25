@@ -28,6 +28,7 @@ HN_TOP_STORIES_URL = "https://hacker-news.firebaseio.com/v0/topstories.json"
 HN_ITEM_URL = "https://hacker-news.firebaseio.com/v0/item/{item_id}.json"
 TELEGRAM_API_BASE = "https://api.telegram.org"
 FETCH_ATTEMPTS = 3
+MAX_REPORT_ITEMS = 8
 SSL_CONTEXT: ssl.SSLContext | None = None
 
 
@@ -292,6 +293,9 @@ def fetch_watched_releases(
     unavailable repository must not prevent the primary digest from sending.
     """
 
+    if limit <= 0:
+        return []
+
     since_utc = since.astimezone(dt.timezone.utc)
     releases: list[GitHubRelease] = []
     for repository in repositories:
@@ -474,7 +478,13 @@ def parse_args() -> argparse.Namespace:
         action="store_true",
         help="Disable SSL certificate verification for temporary local testing.",
     )
-    return parser.parse_args()
+    args = parser.parse_args()
+    limits = (args.github_limit, args.hn_limit, args.release_limit)
+    if any(limit < 0 for limit in limits):
+        parser.error("item limits must be zero or greater")
+    if sum(limits) > MAX_REPORT_ITEMS:
+        parser.error(f"combined item limits must not exceed {MAX_REPORT_ITEMS}")
+    return args
 
 
 def main() -> int:
