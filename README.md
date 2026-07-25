@@ -5,8 +5,9 @@
 ## 功能
 
 - GitHub Trending：最多 3 条
-- Hacker News：最多 3 条
+- Hacker News：最多 2 条
 - 关注项目的正式 GitHub Release：最多 2 条
+- Hugging Face Daily Papers Radar：最多 1 条合格论文
 - 生成本地 Markdown 周报
 - 推送摘要到 Telegram
 - GitHub Actions 主调度，macOS 本地补偿调度
@@ -52,7 +53,7 @@ python3 collector.py --skip-telegram
 
 ```bash
 python3 collector.py --skip-telegram --watchlist-file watchlist.json \
-  --github-limit 3 --hn-limit 3 --release-limit 2
+  --github-limit 3 --hn-limit 2 --release-limit 2 --hf-limit 1
 ```
 
 正常执行：
@@ -118,5 +119,5 @@ https://api.telegram.org/bot<YOUR_BOT_TOKEN>/getUpdates
 - GitHub Trending 不是官方 API，这里是从页面解析数据
 - Hacker News 使用官方 Firebase API
 - 关注项目的 Release 使用 GitHub 官方 REST API；草稿和预发布版本不会进入周报
-- Hugging Face Daily Papers 仅作为未来的候选雷达，默认不会抓取或推送
+- Hugging Face Daily Papers 仅筛选最近 7 天内主题相关、带公开资源且至少 5 个 upvote 的论文，最多推送 1 条
 - Telegram 默认按纯文本发送，避免 Markdown 转义问题

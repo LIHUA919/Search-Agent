@@ -9,8 +9,9 @@
 | 栏目 | 上限 | 解决的问题 |
 | --- | ---: | --- |
 | GitHub Trending | 3 | 哪些开源项目正在快速获得关注 |
-| Hacker News | 3 | 工程师社区正在讨论什么 |
+| Hacker News | 2 | 工程师社区正在讨论什么 |
 | Watched Project Releases | 2 | 我已关注的工具是否有正式版本、重大变更或安全修复 |
+| Hugging Face Daily Papers Radar | 1 | 哪篇近期 AI 论文同时具备相关性、公开资源和社区信号 |
 
 没有合格条目时，栏目可以少于上限；系统绝不为凑数补充低价值信息。
 
@@ -40,9 +41,15 @@
 
 `watchlist.json` 是普通、可提交的配置，不包含 token 或聊天 ID。用户负责选择关注项目；默认空列表保证系统不会擅自扩大信息范围。
 
-### Hugging Face Daily Papers：仅作为未来雷达
+### Hugging Face Daily Papers Radar
 
-不接入默认推送。它是发现近期 AI 论文和社区关注度的候选池，不是同行评审或严格编辑精选。将来若启用，最多只能贡献 1 条，而且必须同时满足：与关注主题相关、具备公开代码/模型/实验、并有足够的社区或作者信号。没有候选时不显示该栏目。
+默认最多贡献 1 条。它是发现近期 AI 论文和社区关注度的雷达，不代表同行评审或严格编辑精选。候选必须在最近 7 天进入 Daily Papers，并同时满足：
+
+- 标题或摘要与 Agent、LLM、RAG、推理、多模态、代码或工具使用等 AI 工程主题相关；
+- 提供 GitHub 或 Hugging Face 上的公开实现资源；
+- 至少获得 5 个社区 upvote。
+
+合格候选按 upvote、收录时间倒序选择；没有候选或接口失败时不显示该栏目，也不影响其他来源和 Telegram 交付。
 
 arXiv、供应商新闻、云厂商更新、Reddit/X 和泛科技媒体同样不进入默认周报；它们要么和现有来源重复，要么噪声高于用户的阅读预算。
 
@@ -52,8 +59,9 @@ arXiv、供应商新闻、云厂商更新、Reddit/X 和泛科技媒体同样不
 watchlist.json ─┐
                 ├─ GitHub Releases API ──> 7 天窗口 + 正式版过滤 ─┐
 GitHub Trending ┼──────────────────────────────────────────────────┤
-Hacker News ────┘                                                  ├─> 最多 8 条 Markdown
-                                                                    └─> Telegram
+Hacker News ────┤                                                  ├─> 最多 8 条 Markdown
+HF Daily Papers ┴─> 相关性 + 公开资源 + upvote 过滤 ───────────────┘
+                                                                   └─> Telegram
 ```
 
 当前实现不维护跨周的“已见条目”状态：Release 的 `published_at` 与 7 天窗口已经满足每周定时任务的需求。若未来改为不定期运行或增加会修订历史条目的来源，再引入持久化游标和 canonical URL 去重。
@@ -79,7 +87,8 @@ macOS `launchd` 在每周日 18:00 执行本地补偿；若当天 GitHub Actions
 - 空 watchlist 不增加 Release 栏目。
 - 配置中的仓库只纳入 7 天内的非 draft、非 prerelease Release。
 - Release API 的单仓库故障不影响 GitHub Trending、HN 或 Telegram 交付。
-- HF Daily Papers 不会被抓取、发送或计入默认条目数。
+- HF Daily Papers 最多 1 条，且只纳入最近 7 天内同时满足主题、公开资源和社区信号的论文。
+- HF Daily Papers API 故障不影响其他来源或 Telegram 交付。
 - 每次变更通过单元测试、Python 编译和一次 `--skip-telegram` 实际抓取验证。
 
 ## 运行检查

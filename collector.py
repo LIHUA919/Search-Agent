@@ -24,6 +24,7 @@ from typing import Iterable
 
 GITHUB_TRENDING_URL = "https://github.com/trending?since=weekly"
 GITHUB_RELEASES_URL = "https://api.github.com/repos/{repository}/releases?per_page=20"
+HF_DAILY_PAPERS_URL = "https://huggingface.co/api/daily_papers"
 HN_TOP_STORIES_URL = "https://hacker-news.firebaseio.com/v0/topstories.json"
 HN_ITEM_URL = "https://hacker-news.firebaseio.com/v0/item/{item_id}.json"
 TELEGRAM_API_BASE = "https://api.telegram.org"
@@ -58,6 +59,17 @@ class GitHubRelease:
     tag: str
     summary: str
     published_at: dt.datetime
+
+
+@dataclasses.dataclass
+class HFDailyPaper:
+    paper_id: str
+    title: str
+    url: str
+    summary: str
+    resource_url: str
+    upvotes: int
+    submitted_at: dt.datetime
 
 
 class GitHubTrendingParser(HTMLParser):
@@ -346,6 +358,77 @@ def fetch_watched_releases(
     return latest_releases
 
 
+HF_RELEVANCE_TERMS = (
+    "agent",
+    "language model",
+    "llm",
+    "multimodal",
+    "retrieval",
+    "rag",
+    "reasoning",
+    "code",
+    "tool use",
+)
+HF_MIN_UPVOTES = 5
+
+
+def fetch_hf_daily_papers(
+    since: dt.datetime,
+    limit: int,
+) -> list[HFDailyPaper]:
+    """Return high-signal Daily Papers with public implementation resources."""
+
+    if limit <= 0:
+        return []
+
+    try:
+        response = fetch_json(HF_DAILY_PAPERS_URL)
+    except Exception as exc:
+        print(f"Warning: unable to fetch Hugging Face Daily Papers: {exc}", file=sys.stderr)
+        return []
+    if not isinstance(response, list):
+        print("Warning: unexpected Hugging Face Daily Papers response", file=sys.stderr)
+        return []
+
+    since_utc = since.astimezone(dt.timezone.utc)
+    papers: list[HFDailyPaper] = []
+    for item in response:
+        if not isinstance(item, dict) or not isinstance(item.get("paper"), dict):
+            continue
+        paper = item["paper"]
+        paper_id = str(paper.get("id") or "")
+        title = str(paper.get("title") or item.get("title") or "")
+        summary = str(paper.get("summary") or item.get("summary") or "")
+        submitted_at = parse_github_timestamp(paper.get("submittedOnDailyAt"))
+        resource_url = str(paper.get("githubRepo") or paper.get("projectPage") or "")
+        upvotes = int(paper.get("upvotes") or 0)
+        searchable = f"{title} {summary}".lower()
+        if (
+            not paper_id
+            or not title
+            or submitted_at is None
+            or submitted_at < since_utc
+            or not resource_url.startswith(("https://github.com/", "https://huggingface.co/"))
+            or upvotes < HF_MIN_UPVOTES
+            or not any(term in searchable for term in HF_RELEVANCE_TERMS)
+        ):
+            continue
+        papers.append(
+            HFDailyPaper(
+                paper_id=paper_id,
+                title=title,
+                url=f"https://huggingface.co/papers/{paper_id}",
+                summary=summarize_release(summary),
+                resource_url=resource_url,
+                upvotes=upvotes,
+                submitted_at=submitted_at,
+            )
+        )
+
+    papers.sort(key=lambda paper: (paper.upvotes, paper.submitted_at), reverse=True)
+    return papers[:limit]
+
+
 def load_env(env_path: Path) -> None:
     if not env_path.exists():
         return
@@ -361,6 +444,7 @@ def format_report(
     github_repos: Iterable[GitHubRepo],
     hn_stories: Iterable[HNStory],
     watched_releases: Iterable[GitHubRelease],
+    hf_daily_papers: Iterable[HFDailyPaper],
     generated_at: dt.datetime,
 ) -> str:
     date_label = generated_at.strftime("%Y-%m-%d %H:%M")
@@ -408,6 +492,18 @@ def format_report(
                 ]
             )
 
+    papers = list(hf_daily_papers)
+    if papers:
+        lines.extend(["", "## Hugging Face Daily Papers Radar", ""])
+        for index, paper in enumerate(papers, start=1):
+            lines.extend(
+                [
+                    f"{index}. [{paper.title}]({paper.url})",
+                    f"   {paper.summary}",
+                    f"   {paper.upvotes} upvotes | [Public resources]({paper.resource_url})",
+                ]
+            )
+
     return "\n".join(line for line in lines if line != "")
 
 
@@ -451,12 +547,18 @@ def parse_args() -> argparse.Namespace:
         description="Collect a low-noise weekly technology digest."
     )
     parser.add_argument("--github-limit", type=int, default=3)
-    parser.add_argument("--hn-limit", type=int, default=3)
+    parser.add_argument("--hn-limit", type=int, default=2)
     parser.add_argument(
         "--release-limit",
         type=int,
         default=2,
         help="Maximum watched-project releases to include.",
+    )
+    parser.add_argument(
+        "--hf-limit",
+        type=int,
+        default=1,
+        help="Maximum qualified Hugging Face Daily Papers to include.",
     )
     parser.add_argument(
         "--watchlist-file",
@@ -479,7 +581,7 @@ def parse_args() -> argparse.Namespace:
         help="Disable SSL certificate verification for temporary local testing.",
     )
     args = parser.parse_args()
-    limits = (args.github_limit, args.hn_limit, args.release_limit)
+    limits = (args.github_limit, args.hn_limit, args.release_limit, args.hf_limit)
     if any(limit < 0 for limit in limits):
         parser.error("item limits must be zero or greater")
     if sum(limits) > MAX_REPORT_ITEMS:
@@ -509,7 +611,17 @@ def main() -> int:
         since=dt.datetime.now(dt.timezone.utc) - dt.timedelta(days=7),
         limit=args.release_limit,
     )
-    report = format_report(github_repos, hn_stories, watched_releases, generated_at)
+    hf_daily_papers = fetch_hf_daily_papers(
+        since=dt.datetime.now(dt.timezone.utc) - dt.timedelta(days=7),
+        limit=args.hf_limit,
+    )
+    report = format_report(
+        github_repos,
+        hn_stories,
+        watched_releases,
+        hf_daily_papers,
+        generated_at,
+    )
 
     timestamp = generated_at.strftime("%Y%m%d-%H%M%S")
     report_path = output_dir / f"weekly-report-{timestamp}.md"

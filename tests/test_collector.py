@@ -142,9 +142,57 @@ class ReleaseTests(unittest.TestCase):
         fetch_json.assert_not_called()
 
 
+class HFDailyPaperTests(unittest.TestCase):
+    def test_fetch_hf_daily_papers_requires_recent_relevant_supported_signal(self) -> None:
+        qualifying = {
+            "paper": {
+                "id": "2607.12345",
+                "title": "Reliable Tool Use for Language Model Agents",
+                "summary": "We evaluate an agent framework with reproducible experiments.",
+                "submittedOnDailyAt": "2026-07-24T00:00:00.000Z",
+                "githubRepo": "https://github.com/example/agent-paper",
+                "upvotes": 12,
+            }
+        }
+        no_resource = {
+            "paper": {
+                "id": "2607.22222",
+                "title": "Another LLM Study",
+                "summary": "No public implementation.",
+                "submittedOnDailyAt": "2026-07-24T00:00:00.000Z",
+                "upvotes": 50,
+            }
+        }
+        low_signal = {
+            "paper": {
+                "id": "2607.33333",
+                "title": "A Multimodal Model",
+                "summary": "Code and experiments.",
+                "submittedOnDailyAt": "2026-07-24T00:00:00.000Z",
+                "githubRepo": "https://github.com/example/model",
+                "upvotes": 2,
+            }
+        }
+        since = dt.datetime(2026, 7, 18, tzinfo=dt.timezone.utc)
+
+        with patch(
+            "collector.fetch_json",
+            return_value=[low_signal, no_resource, qualifying],
+        ):
+            papers = collector.fetch_hf_daily_papers(since=since, limit=1)
+
+        self.assertEqual([paper.paper_id for paper in papers], ["2607.12345"])
+        self.assertEqual(papers[0].upvotes, 12)
+
+    def test_hf_daily_papers_failure_is_best_effort(self) -> None:
+        since = dt.datetime(2026, 7, 18, tzinfo=dt.timezone.utc)
+        with patch("collector.fetch_json", side_effect=OSError("network unavailable")):
+            self.assertEqual(collector.fetch_hf_daily_papers(since=since, limit=1), [])
+
+
 class ReportTests(unittest.TestCase):
     def test_release_section_is_omitted_when_watchlist_has_no_matches(self) -> None:
-        report = collector.format_report([], [], [], dt.datetime(2026, 7, 25, 9, 0))
+        report = collector.format_report([], [], [], [], dt.datetime(2026, 7, 25, 9, 0))
 
         self.assertNotIn("Watched Project Releases", report)
 
@@ -157,11 +205,32 @@ class ReportTests(unittest.TestCase):
             summary="Security fix.",
             published_at=dt.datetime(2026, 7, 24, tzinfo=dt.timezone.utc),
         )
-        report = collector.format_report([], [], [release], dt.datetime(2026, 7, 25, 9, 0))
+        report = collector.format_report(
+            [], [], [release], [], dt.datetime(2026, 7, 25, 9, 0)
+        )
 
         self.assertIn("## Watched Project Releases", report)
         self.assertIn("owner/project v1.0.0", report)
         self.assertIn("Security fix.", report)
+
+    def test_hf_radar_contains_paper_signal_and_resources(self) -> None:
+        paper = collector.HFDailyPaper(
+            paper_id="2607.12345",
+            title="Reliable Agents",
+            url="https://huggingface.co/papers/2607.12345",
+            summary="A reproducible agent study.",
+            resource_url="https://github.com/example/reliable-agents",
+            upvotes=12,
+            submitted_at=dt.datetime(2026, 7, 24, tzinfo=dt.timezone.utc),
+        )
+        report = collector.format_report(
+            [], [], [], [paper], dt.datetime(2026, 7, 25, 9, 0)
+        )
+
+        self.assertIn("## Hugging Face Daily Papers Radar", report)
+        self.assertIn("Reliable Agents", report)
+        self.assertIn("12 upvotes", report)
+        self.assertIn("Public resources", report)
 
 
 class ArgumentTests(unittest.TestCase):
@@ -169,7 +238,10 @@ class ArgumentTests(unittest.TestCase):
         with patch.object(sys, "argv", ["collector.py"]):
             args = collector.parse_args()
 
-        self.assertEqual((args.github_limit, args.hn_limit, args.release_limit), (3, 3, 2))
+        self.assertEqual(
+            (args.github_limit, args.hn_limit, args.release_limit, args.hf_limit),
+            (3, 2, 2, 1),
+        )
 
     def test_combined_information_budget_cannot_exceed_eight_items(self) -> None:
         with (
@@ -184,6 +256,8 @@ class ArgumentTests(unittest.TestCase):
                     "3",
                     "--release-limit",
                     "2",
+                    "--hf-limit",
+                    "1",
                 ],
             ),
             self.assertRaises(SystemExit),
