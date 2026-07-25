@@ -8,7 +8,7 @@
 - 抓取 Hacker News 热门讨论
 - 生成本地 Markdown 周报
 - 推送摘要到 Telegram
-- 适合通过 `cron` 每周执行一次
+- GitHub Actions 主调度，macOS 本地补偿调度
 
 ## 环境
 
@@ -57,23 +57,28 @@ python3 collector.py --skip-telegram --insecure
 
 ## 定时执行
 
-给脚本执行权限：
+GitHub Actions 每周日北京时间 08:17 发送主通知。一次成功发送后会提交一个不含敏感信息的心跳文件，防止公开仓库因长期不活跃而自动停用定时工作流。
+
+macOS 本地补偿任务在每周日 18:00 执行；如果当天 GitHub Actions 已成功发送，它会跳过，因此通常不会产生重复通知。它使用 `launchd`，在 Mac 睡眠时错过的运行会在唤醒后补跑。
+
+安装或更新本地补偿任务：
 
 ```bash
-chmod +x run_weekly.sh
+mkdir -p ~/Library/LaunchAgents
+cp launchd/com.lihua.weekly-tech-collector.plist ~/Library/LaunchAgents/
+launchctl bootout "gui/$(id -u)" ~/Library/LaunchAgents/com.lihua.weekly-tech-collector.plist 2>/dev/null || true
+launchctl bootstrap "gui/$(id -u)" ~/Library/LaunchAgents/com.lihua.weekly-tech-collector.plist
 ```
 
-编辑 `crontab`：
+移除旧的 cron 条目，避免重复执行：
 
 ```bash
 crontab -e
 ```
 
-每周一上午 8 点执行一次：
+删除其中的 `weekly-tech-collector/run_weekly.sh` 行。
 
-```cron
-0 8 * * 1 /Users/lihua/projects/weekly-tech-collector/run_weekly.sh >> /Users/lihua/projects/weekly-tech-collector/collector.log 2>&1
-```
+详细的调度、恢复和故障策略见 [DESIGN.md](DESIGN.md)。
 
 ## Telegram Chat ID
 

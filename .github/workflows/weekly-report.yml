@@ -2,19 +2,23 @@ name: Weekly Tech Report
 
 on:
   schedule:
-    # Every Sunday at 00:00 UTC = 8:00 AM Beijing Time
-    - cron: '0 0 * * 0'
+    # Every Sunday at 00:17 UTC = 8:17 AM Beijing Time.
+    # Avoid minute 0, where GitHub may heavily delay or drop scheduled jobs.
+    - cron: '17 0 * * 0'
   workflow_dispatch: # Allow manual trigger
+
+permissions:
+  contents: write
 
 jobs:
   weekly-report:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout code
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7.0.1
 
       - name: Set up Python
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@v7.0.0
         with:
           python-version: '3.11'
 
@@ -26,3 +30,20 @@ jobs:
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
         run: python3 collector.py
+
+      - name: Record successful scheduled delivery
+        if: success() && github.event_name == 'schedule'
+        env:
+          RUN_ID: ${{ github.run_id }}
+          RUN_ATTEMPT: ${{ github.run_attempt }}
+          COMMIT_SHA: ${{ github.sha }}
+        run: |
+          timestamp="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+          printf '{\n  "last_successful_scheduled_delivery_utc": "%s",\n  "source_commit": "%s",\n  "workflow_run_id": "%s",\n  "workflow_run_attempt": "%s"\n}\n' \
+            "$timestamp" "$COMMIT_SHA" "$RUN_ID" "$RUN_ATTEMPT" \
+            > .github/weekly-tech-collector-heartbeat.json
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add .github/weekly-tech-collector-heartbeat.json
+          git diff --cached --quiet || git commit -m "chore: record weekly collector heartbeat"
+          git push
