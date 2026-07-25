@@ -1,63 +1,92 @@
 # Weekly Tech Collector Design
 
-## Goal
+## 产品目标
 
-Deliver one weekly Telegram digest containing GitHub Trending repositories and
-Hacker News stories, without relying on a developer laptop being awake.
+在五分钟内读完一份不超过 8 条的周报。它优先回答“本周哪些变化会影响我”，而不是复述互联网的热门内容。
 
-## Delivery architecture
+默认周报由三种互补信号组成：
 
-```text
-GitHub Actions (primary, Sunday 08:17 Beijing)
-  -> collect sources -> write local artifact -> send Telegram
-  -> commit successful-delivery heartbeat
+| 栏目 | 上限 | 解决的问题 |
+| --- | ---: | --- |
+| GitHub Trending | 3 | 哪些开源项目正在快速获得关注 |
+| Hacker News | 3 | 工程师社区正在讨论什么 |
+| Watched Project Releases | 2 | 我已关注的工具是否有正式版本、重大变更或安全修复 |
 
-macOS launchd (fallback, Sunday 18:00 Beijing)
-  -> query today's GitHub Actions result
-  -> skip when primary succeeded; otherwise collect and send Telegram
+没有合格条目时，栏目可以少于上限；系统绝不为凑数补充低价值信息。
+
+## 信息源边界
+
+### GitHub Trending 与 Hacker News
+
+保留现有抓取方式，但默认从各 10 条降至各 3 条。它们提供广泛的“发现”信号，而不是变更通知。
+
+### 关注项目的 GitHub Releases
+
+这是本期唯一新增的默认信息源。`watchlist.json` 中的每一项都是用户明确选择的 `owner/repository`，例如 `vllm-project/vllm`；系统只读取这些仓库的正式 GitHub Release。
+
+- 报告窗口：运行时刻向前 7 天。
+- 过滤：排除 draft 和 prerelease；按发布时间倒序。
+- 上限：所有关注项目合计最多 2 条，且每个项目最多保留最新的 1 条。
+- 内容：仓库、版本标签、官方 Release 链接、截断后的 release notes、发布日期。
+- 失败策略：单个仓库的 API 失败只记录 warning，不阻断主周报。
+
+```json
+{
+  "github_releases": [
+    "owner/repository"
+  ]
+}
 ```
 
-GitHub Actions is the primary scheduler because it runs independently of the
-Mac. The workflow is deliberately scheduled at minute 17 rather than minute 0:
-GitHub documents that schedules at the start of an hour can be delayed or
-dropped under load.
+`watchlist.json` 是普通、可提交的配置，不包含 token 或聊天 ID。用户负责选择关注项目；默认空列表保证系统不会擅自扩大信息范围。
 
-## Inactivity protection
+### Hugging Face Daily Papers：仅作为未来雷达
 
-Public repositories have scheduled workflows automatically disabled after 60
-days without repository activity. A successful scheduled run therefore writes
-`.github/weekly-tech-collector-heartbeat.json` and commits it with the
-`github-actions[bot]` identity. A failed collection or Telegram delivery never
-writes the heartbeat, so a green heartbeat always represents a delivered
-digest.
+不接入默认推送。它是发现近期 AI 论文和社区关注度的候选池，不是同行评审或严格编辑精选。将来若启用，最多只能贡献 1 条，而且必须同时满足：与关注主题相关、具备公开代码/模型/实验、并有足够的社区或作者信号。没有候选时不显示该栏目。
 
-The workflow has `contents: write` permission solely for that heartbeat commit.
-The heartbeat contains no source content, Telegram credential, or chat ID.
+arXiv、供应商新闻、云厂商更新、Reddit/X 和泛科技媒体同样不进入默认周报；它们要么和现有来源重复，要么噪声高于用户的阅读预算。
 
-## Local fallback behavior
+## 数据流
 
-`launchd` replaces `cron`. Unlike `cron`, a `StartCalendarInterval` job missed
-while macOS sleeps is run once after the Mac wakes. Before sending, the local
-job checks the public GitHub Actions API for a successful scheduled delivery on
-the current Beijing calendar day. It skips in the normal case and sends only
-when the cloud run is absent or the API cannot be reached.
+```text
+watchlist.json ─┐
+                ├─ GitHub Releases API ──> 7 天窗口 + 正式版过滤 ─┐
+GitHub Trending ┼──────────────────────────────────────────────────┤
+Hacker News ────┘                                                  ├─> 最多 8 条 Markdown
+                                                                    └─> Telegram
+```
 
-The fallback check intentionally fails open: loss of API connectivity produces
-a potentially duplicate message rather than silently losing the week's digest.
+当前实现不维护跨周的“已见条目”状态：Release 的 `published_at` 与 7 天窗口已经满足每周定时任务的需求。若未来改为不定期运行或增加会修订历史条目的来源，再引入持久化游标和 canonical URL 去重。
 
-## Failure and recovery
+所有 HTTP 抓取对瞬时连接错误最多重试 3 次，间隔为 1 秒、2 秒；最终失败才向调用方报错。Release 抓取在这个基础上仍以单仓库为粒度降级。
 
-- A collector or Telegram failure marks the GitHub Actions run failed and does
-  not write a heartbeat.
-- A disabled workflow is restored with `gh workflow enable weekly-report.yml`.
-- The local launch agent writes both output streams to `collector.log`.
-- Reports remain local and ignored by Git; they are not used as delivery state.
+## 调度与交付
 
-## Operational checks
+GitHub Actions 是主调度器，每周日 08:17（北京时间）运行。一次成功的定时发送会提交无敏感信息的心跳文件，防止公开仓库因 60 天无活动而停用定时工作流。
+
+macOS `launchd` 在每周日 18:00 执行本地补偿；若当天 GitHub Actions 已成功发送，本地任务跳过。`launchd` 在睡眠期间错过的日历任务会在唤醒后合并补跑。
+
+## 故障恢复
+
+- GitHub Actions 显示 `disabled_inactivity` 时，运行 `gh workflow enable weekly-report.yml` 恢复；成功的定时发送会再次写入心跳，避免重复停用。
+- 主信息源连续 3 次请求失败时，工作流失败且不会写入成功心跳；检查 Actions 日志后再重跑。
+- 单个关注项目的 Release API 失败只写入 warning，主周报继续发送。
+- 本地补偿任务的输出保存在 `collector.log`；可用 `launchctl print "gui/$(id -u)/com.lihua.weekly-tech-collector"` 检查加载状态。
+
+## 验收标准
+
+- 默认运行最多输出 8 条内容项。
+- 空 watchlist 不增加 Release 栏目。
+- 配置中的仓库只纳入 7 天内的非 draft、非 prerelease Release。
+- Release API 的单仓库故障不影响 GitHub Trending、HN 或 Telegram 交付。
+- HF Daily Papers 不会被抓取、发送或计入默认条目数。
+- 每次变更通过单元测试、Python 编译和一次 `--skip-telegram` 实际抓取验证。
+
+## 运行检查
 
 ```bash
+python3 -m unittest discover -s tests -v
+python3 collector.py --skip-telegram --insecure
 gh workflow list --all
-gh run list --workflow weekly-report.yml --limit 10
 launchctl print "gui/$(id -u)/com.lihua.weekly-tech-collector"
-tail -n 100 collector.log
 ```

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Weekly collector for GitHub Trending and Hacker News with Telegram delivery."""
+"""Low-noise weekly collector for GitHub, Hacker News, and watched releases."""
 
 from __future__ import annotations
 
@@ -13,6 +13,8 @@ import re
 import ssl
 import sys
 import textwrap
+import time
+import urllib.error
 import urllib.parse
 import urllib.request
 from html.parser import HTMLParser
@@ -21,9 +23,11 @@ from typing import Iterable
 
 
 GITHUB_TRENDING_URL = "https://github.com/trending?since=weekly"
+GITHUB_RELEASES_URL = "https://api.github.com/repos/{repository}/releases?per_page=20"
 HN_TOP_STORIES_URL = "https://hacker-news.firebaseio.com/v0/topstories.json"
 HN_ITEM_URL = "https://hacker-news.firebaseio.com/v0/item/{item_id}.json"
 TELEGRAM_API_BASE = "https://api.telegram.org"
+FETCH_ATTEMPTS = 3
 SSL_CONTEXT: ssl.SSLContext | None = None
 
 
@@ -43,6 +47,16 @@ class HNStory:
     points: int
     comments: int
     author: str
+
+
+@dataclasses.dataclass
+class GitHubRelease:
+    repository: str
+    name: str
+    url: str
+    tag: str
+    summary: str
+    published_at: dt.datetime
 
 
 class GitHubTrendingParser(HTMLParser):
@@ -164,8 +178,24 @@ def fetch_text(url: str, timeout: int = 30) -> str:
             "Accept": "text/html,application/json",
         },
     )
-    with urllib.request.urlopen(request, timeout=timeout, context=SSL_CONTEXT) as response:
-        return response.read().decode("utf-8", errors="replace")
+    for attempt in range(FETCH_ATTEMPTS):
+        try:
+            with urllib.request.urlopen(
+                request, timeout=timeout, context=SSL_CONTEXT
+            ) as response:
+                return response.read().decode("utf-8", errors="replace")
+        except (urllib.error.URLError, TimeoutError, ssl.SSLError) as exc:
+            if attempt == FETCH_ATTEMPTS - 1:
+                raise
+            delay = 2**attempt
+            print(
+                f"Warning: fetch failed ({exc}); retrying in {delay}s "
+                f"({attempt + 1}/{FETCH_ATTEMPTS})",
+                file=sys.stderr,
+            )
+            time.sleep(delay)
+
+    raise RuntimeError("Unreachable fetch retry state")
 
 
 def fetch_json(url: str, timeout: int = 30) -> object:
@@ -204,6 +234,114 @@ def fetch_hn_top(limit: int) -> list[HNStory]:
     return stories
 
 
+def load_watched_repositories(config_path: Path) -> list[str]:
+    """Load unique ``owner/repository`` entries from the tracked watchlist."""
+
+    if not config_path.exists():
+        return []
+
+    try:
+        config = json.loads(config_path.read_text(encoding="utf-8"))
+    except json.JSONDecodeError as exc:
+        raise RuntimeError(f"Invalid watchlist JSON: {config_path}") from exc
+
+    if not isinstance(config, dict):
+        raise RuntimeError("Watchlist must be a JSON object")
+    repositories = config.get("github_releases", [])
+    if not isinstance(repositories, list) or not all(
+        isinstance(repository, str) for repository in repositories
+    ):
+        raise RuntimeError("watchlist.github_releases must be a list of strings")
+
+    unique_repositories: list[str] = []
+    for repository in repositories:
+        normalized = repository.strip()
+        if not re.fullmatch(r"[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+", normalized):
+            raise RuntimeError(f"Invalid GitHub repository in watchlist: {repository!r}")
+        if normalized not in unique_repositories:
+            unique_repositories.append(normalized)
+    return unique_repositories
+
+
+def parse_github_timestamp(value: object) -> dt.datetime | None:
+    if not isinstance(value, str):
+        return None
+    try:
+        return dt.datetime.fromisoformat(value.replace("Z", "+00:00")).astimezone(
+            dt.timezone.utc
+        )
+    except ValueError:
+        return None
+
+
+def summarize_release(value: object, width: int = 180) -> str:
+    if not isinstance(value, str) or not value.strip():
+        return "No release notes provided."
+    plain_text = re.sub(r"[`*_>#]", "", value)
+    return textwrap.shorten(normalize_space(plain_text), width=width, placeholder="…")
+
+
+def fetch_watched_releases(
+    repositories: Iterable[str],
+    since: dt.datetime,
+    limit: int,
+) -> list[GitHubRelease]:
+    """Return stable releases published within the reporting window.
+
+    The release section is intentionally best-effort: a rate limit or a single
+    unavailable repository must not prevent the primary digest from sending.
+    """
+
+    since_utc = since.astimezone(dt.timezone.utc)
+    releases: list[GitHubRelease] = []
+    for repository in repositories:
+        try:
+            response = fetch_json(GITHUB_RELEASES_URL.format(repository=repository))
+        except Exception as exc:
+            print(f"Warning: unable to fetch releases for {repository}: {exc}", file=sys.stderr)
+            continue
+
+        if not isinstance(response, list):
+            print(
+                f"Warning: unexpected GitHub releases response for {repository}",
+                file=sys.stderr,
+            )
+            continue
+
+        for item in response:
+            if not isinstance(item, dict) or item.get("draft") or item.get("prerelease"):
+                continue
+            published_at = parse_github_timestamp(item.get("published_at"))
+            if published_at is None or published_at < since_utc:
+                continue
+            tag = str(item.get("tag_name") or "")
+            url = str(item.get("html_url") or "")
+            if not tag or not url:
+                continue
+            releases.append(
+                GitHubRelease(
+                    repository=repository,
+                    name=str(item.get("name") or tag),
+                    url=url,
+                    tag=tag,
+                    summary=summarize_release(item.get("body")),
+                    published_at=published_at,
+                )
+            )
+
+    releases.sort(key=lambda release: release.published_at, reverse=True)
+    latest_releases: list[GitHubRelease] = []
+    seen_repositories: set[str] = set()
+    for release in releases:
+        if release.repository in seen_repositories:
+            continue
+        latest_releases.append(release)
+        seen_repositories.add(release.repository)
+        if len(latest_releases) >= limit:
+            break
+    return latest_releases
+
+
 def load_env(env_path: Path) -> None:
     if not env_path.exists():
         return
@@ -218,6 +356,7 @@ def load_env(env_path: Path) -> None:
 def format_report(
     github_repos: Iterable[GitHubRepo],
     hn_stories: Iterable[HNStory],
+    watched_releases: Iterable[GitHubRelease],
     generated_at: dt.datetime,
 ) -> str:
     date_label = generated_at.strftime("%Y-%m-%d %H:%M")
@@ -251,6 +390,19 @@ def format_report(
                 f"   {meta}",
             ]
         )
+
+    releases = list(watched_releases)
+    if releases:
+        lines.extend(["", "## Watched Project Releases", ""])
+        for index, release in enumerate(releases, start=1):
+            published_label = release.published_at.strftime("%Y-%m-%d")
+            lines.extend(
+                [
+                    f"{index}. [{release.repository} {release.tag}]({release.url})",
+                    f"   {release.summary}",
+                    f"   Released {published_label}",
+                ]
+            )
 
     return "\n".join(line for line in lines if line != "")
 
@@ -292,10 +444,21 @@ def send_telegram_message(bot_token: str, chat_id: str, text: str) -> None:
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
-        description="Collect weekly GitHub Trending and Hacker News stories."
+        description="Collect a low-noise weekly technology digest."
     )
-    parser.add_argument("--github-limit", type=int, default=10)
-    parser.add_argument("--hn-limit", type=int, default=10)
+    parser.add_argument("--github-limit", type=int, default=3)
+    parser.add_argument("--hn-limit", type=int, default=3)
+    parser.add_argument(
+        "--release-limit",
+        type=int,
+        default=2,
+        help="Maximum watched-project releases to include.",
+    )
+    parser.add_argument(
+        "--watchlist-file",
+        default="watchlist.json",
+        help="JSON file containing the GitHub release watchlist.",
+    )
     parser.add_argument(
         "--output-dir",
         default="output",
@@ -327,7 +490,16 @@ def main() -> int:
 
     github_repos = fetch_github_trending(args.github_limit)
     hn_stories = fetch_hn_top(args.hn_limit)
-    report = format_report(github_repos, hn_stories, generated_at)
+    watchlist_path = Path(args.watchlist_file)
+    if not watchlist_path.is_absolute():
+        watchlist_path = project_root / watchlist_path
+    watched_repositories = load_watched_repositories(watchlist_path)
+    watched_releases = fetch_watched_releases(
+        watched_repositories,
+        since=dt.datetime.now(dt.timezone.utc) - dt.timedelta(days=7),
+        limit=args.release_limit,
+    )
+    report = format_report(github_repos, hn_stories, watched_releases, generated_at)
 
     timestamp = generated_at.strftime("%Y%m%d-%H%M%S")
     report_path = output_dir / f"weekly-report-{timestamp}.md"

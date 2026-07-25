@@ -1,11 +1,12 @@
 # Weekly Tech Collector
 
-每周抓取一次 GitHub Trending 和 Hacker News 热门内容，生成 Markdown 周报，并推送到 Telegram。
+每周生成一份不超过 8 条的技术周报，并推送到 Telegram。
 
 ## 功能
 
-- 抓取 GitHub 每周热门仓库
-- 抓取 Hacker News 热门讨论
+- GitHub Trending：最多 3 条
+- Hacker News：最多 3 条
+- 关注项目的正式 GitHub Release：最多 2 条
 - 生成本地 Markdown 周报
 - 推送摘要到 Telegram
 - GitHub Actions 主调度，macOS 本地补偿调度
@@ -27,12 +28,31 @@ cp .env.example .env
 - `TELEGRAM_BOT_TOKEN`
 - `TELEGRAM_CHAT_ID`
 
+3. 在 `watchlist.json` 填写你明确想关注的 GitHub 项目：
+
+```json
+{
+  "github_releases": [
+    "owner/repository"
+  ]
+}
+```
+
+默认空列表不会产生 Release 通知。请把这个普通配置文件提交到仓库，GitHub Actions 才能读取同一份关注清单。
+
 ## 运行
 
 先只生成报告，不推送 Telegram：
 
 ```bash
 python3 collector.py --skip-telegram
+```
+
+临时指定另一份关注清单或调整条目上限：
+
+```bash
+python3 collector.py --skip-telegram --watchlist-file watchlist.json \
+  --github-limit 3 --hn-limit 3 --release-limit 2
 ```
 
 正常执行：
@@ -78,7 +98,7 @@ crontab -e
 
 删除其中的 `weekly-tech-collector/run_weekly.sh` 行。
 
-详细的调度、恢复和故障策略见 [DESIGN.md](DESIGN.md)。
+详细的信息预算、来源边界、调度和验收标准见 [DESIGN.md](DESIGN.md)。
 
 ## Telegram Chat ID
 
@@ -97,4 +117,6 @@ https://api.telegram.org/bot<YOUR_BOT_TOKEN>/getUpdates
 
 - GitHub Trending 不是官方 API，这里是从页面解析数据
 - Hacker News 使用官方 Firebase API
+- 关注项目的 Release 使用 GitHub 官方 REST API；草稿和预发布版本不会进入周报
+- Hugging Face Daily Papers 仅作为未来的候选雷达，默认不会抓取或推送
 - Telegram 默认按纯文本发送，避免 Markdown 转义问题
