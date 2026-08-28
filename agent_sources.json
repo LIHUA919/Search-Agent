@@ -1,0 +1,41 @@
+{
+  "schema_version": "agent_sources_v1",
+  "github_releases": [
+    {
+      "repository": "openai/openai-agents-python",
+      "publisher": "OpenAI",
+      "topics": [
+        "control_plane",
+        "memory_context_skills"
+      ],
+      "priority": "P0"
+    },
+    {
+      "repository": "modelcontextprotocol/modelcontextprotocol",
+      "publisher": "Model Context Protocol",
+      "topics": [
+        "memory_context_skills",
+        "control_plane"
+      ],
+      "priority": "P0"
+    },
+    {
+      "repository": "a2aproject/A2A",
+      "publisher": "A2A Project",
+      "topics": [
+        "control_plane"
+      ],
+      "priority": "P0"
+    }
+  ],
+  "research_feeds": [
+    {
+      "kind": "github_daily_jsonl",
+      "repository": "LIHUA919/AI-Agents-Daily-Research",
+      "branch": "main",
+      "path_template": "data/{date}.jsonl",
+      "publisher": "arXiv via AI-Agents-Daily-Research",
+      "priority": "P1"
+    }
+  ]
+}

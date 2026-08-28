@@ -15,6 +15,40 @@
 
 没有合格条目时，栏目可以少于上限；系统绝不为凑数补充低价值信息。
 
+## Agent Radar v1
+
+Agent Radar 是并列的草稿模式，不替换周报，也不共享 Telegram 交付路径。它解决的是“每天有哪些 Agent 一手变化值得进一步验证和在 X 表达”，而不是再做一份泛 AI 新闻榜。
+
+默认主题只有三类：
+
+| 主题 | 关注的问题 |
+| --- | --- |
+| `control_plane` | 长时任务、并行 Agent、状态、handoff、审批、恢复与冲突 |
+| `memory_context_skills` | Memory、Context、Skills、工具使用与协议边界 |
+| `agent_evaluation` | 复杂问题成功率、成本、人工介入、恢复和可复现实验 |
+
+### 来源注册表
+
+`agent_sources.json` 是版本化、可审查的来源注册表。v1 支持两类输入：
+
+- `github_releases`：官方项目的非 draft、非 prerelease Release，证据等级为 `first_party`；
+- `github_daily_jsonl`：读取 `AI-Agents-Daily-Research` 的 `data/{date}.jsonl`，只保留标题或摘要命中 Agent 主题的 arXiv 条目，证据等级为 `author_preprint`。
+
+两个仓库因此形成清晰分工：`AI-Agents-Daily-Research` 继续做广泛论文采集和历史保存；本仓库做统一筛选、证据标注和编辑草稿。v1 不复制历史数据，也不停止任何原有 Action。
+
+### 统一信号契约
+
+每条候选归一化为 `AgentSignal`：
+
+```text
+signal_id, title, url, publisher, source_kind, published_at,
+topics, priority, evidence_level, summary, why_it_matters, x_angle
+```
+
+`signal_id` 由来源类型与 canonical URL 计算，保证同一来源在一个报告窗口内稳定去重。排序先看 P0/P1/P2，再看发布时间；最多输出 5 条，不为凑数补充弱相关内容。
+
+X 角度是确定性的写作提示，不是事实结论。最终发布前仍需人工打开原始链接、核验具体主张、加入自己的实验或判断。程序没有 X token、发布接口或自动发送动作。
+
 ## 信息源边界
 
 ### GitHub Trending 与 Hacker News
@@ -62,6 +96,10 @@ GitHub Trending ┼────────────────────�
 Hacker News ────┤                                                  ├─> 最多 8 条 Markdown
 HF Daily Papers ┴─> 相关性 + 公开资源 + upvote 过滤 ───────────────┘
                                                                    └─> Telegram
+
+agent_sources.json ──> 官方 GitHub Releases ─┐
+                                             ├─> AgentSignal ─> P0/P1 + 时间排序 ─> Daily Agent Radar 草稿
+AI-Agents-Daily-Research JSONL ─> 主题筛选 ───┘
 ```
 
 当前实现不维护跨周的“已见条目”状态：Release 的 `published_at` 与 7 天窗口已经满足每周定时任务的需求。若未来改为不定期运行或增加会修订历史条目的来源，再引入持久化游标和 canonical URL 去重。
@@ -73,6 +111,8 @@ HF Daily Papers ┴─> 相关性 + 公开资源 + upvote 过滤 ─────
 GitHub Actions 是主调度器，每周日 08:17（北京时间）运行。一次成功的定时发送会提交无敏感信息的心跳文件，防止公开仓库因 60 天无活动而停用定时工作流。
 
 macOS `launchd` 在每周日 18:00 执行本地补偿；若当天 GitHub Actions 已成功发送，本地任务跳过。`launchd` 在睡眠期间错过的日历任务会在唤醒后合并补跑。
+
+Agent Radar v1 仅提供 `python3 collector.py --agent-radar` 手动入口。它始终只写 Markdown，既不调用 Telegram，也不发布 X。是否增加每日 Action 属于后续独立变更，需要先用实际草稿验证信号质量和重复率。
 
 ## 故障恢复
 
@@ -89,6 +129,10 @@ macOS `launchd` 在每周日 18:00 执行本地补偿；若当天 GitHub Actions
 - Release API 的单仓库故障不影响 GitHub Trending、HN 或 Telegram 交付。
 - HF Daily Papers 最多 1 条，且只纳入最近 7 天内同时满足主题、公开资源和社区信号的论文。
 - HF Daily Papers API 故障不影响其他来源或 Telegram 交付。
+- Agent Radar 注册表拒绝非法仓库、未知优先级和无界路径模板。
+- 官方 Release 与研究预印本进入同一个 `AgentSignal` 契约，但保留不同证据等级。
+- Agent Radar 最多 5 条，输出必须包含“发生了什么、为什么重要、证据、X 草稿角度”。
+- Agent Radar 不调用 Telegram；现有每周参数、8 条预算和定时调度保持兼容。
 - 每次变更通过单元测试、Python 编译和一次 `--skip-telegram` 实际抓取验证。
 
 ## 运行检查
@@ -96,6 +140,7 @@ macOS `launchd` 在每周日 18:00 执行本地补偿；若当天 GitHub Actions
 ```bash
 python3 -m unittest discover -s tests -v
 python3 collector.py --skip-telegram --insecure
+python3 collector.py --agent-radar --insecure
 gh workflow list --all
 launchctl print "gui/$(id -u)/com.lihua.weekly-tech-collector"
 ```
